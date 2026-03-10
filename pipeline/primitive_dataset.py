@@ -1,5 +1,6 @@
 import os
 import sys
+import random
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -14,15 +15,16 @@ from pipeline.config_entities import DatasetConfig, DataLoaderConfig
 class PrimitiveDataset(Dataset):
     def __init__(self,
                  *,
-                  dataset_dir: str, 
+                  dataset_dir: str,
                   original_mesh_dir: str,
-                  tokenizer: MeshTokenizer, 
-                  point_cloud_size: int = 2048, 
+                  tokenizer: MeshTokenizer,
+                  point_cloud_size: int = 2048,
                   num_of_bins: int = 1024,
                   std_points:float,
                   mean_points:float,
                   mean_normals:float,
-                  std_normals:float
+                  std_normals:float,
+                  truncated_seq_len: int = 0
                   ):
         """
             Dataset class to handle mesh dataset.
@@ -31,6 +33,7 @@ class PrimitiveDataset(Dataset):
                 point_cloud_size = number of points to sample on the mesh
                 num_of_bins = number of bins to map the values
                 bounding_box_dim = length of ont side of box
+                truncated_seq_len = if >0, randomly crop sequences to this length (must be multiple of 9)
         """
         if os.path.exists(dataset_dir):
             self.data_dir = dataset_dir
@@ -40,7 +43,13 @@ class PrimitiveDataset(Dataset):
         self.mean_points = mean_points
         self.mean_normals = mean_normals
         self.std_normals = std_normals
-        self.max_seq_len = get_max_seq_len(original_mesh_dir)
+        self.truncated_seq_len = truncated_seq_len
+        # For truncated training, all samples are padded to a fixed length.
+        # For full-sequence training, pad to the dataset maximum.
+        if truncated_seq_len > 0:
+            self.max_seq_len = truncated_seq_len + 9  # 9 for SOS prefix
+        else:
+            self.max_seq_len = get_max_seq_len(original_mesh_dir)
         self.num_points = point_cloud_size
         self.num_of_bins = num_of_bins
         self.bounding_box_dim = 1.0
@@ -81,9 +90,14 @@ class PrimitiveDataset(Dataset):
         #decoder input
         dec_input = self.tokenizer.encode(self.files[index])
 
+        # Truncated sequence training: randomly crop to a fixed window aligned to face boundary
+        if self.truncated_seq_len > 0 and len(dec_input) > self.truncated_seq_len:
+            max_start = len(dec_input) - self.truncated_seq_len
+            max_start = (max_start // 9) * 9  # align to face boundary (9 tokens per face)
+            start = random.randint(0, max_start // 9) * 9
+            dec_input = dec_input[start : start + self.truncated_seq_len]
+
         #add special tokens
-        num_dec_tokens = 0
-        
         num_dec_tokens = self.max_seq_len - len(dec_input) - 9
 
         if num_dec_tokens < 0:
@@ -131,10 +145,11 @@ def get_dataloaders(dataset_config: DatasetConfig, loader_config: DataLoaderConf
         tokenizer=mesh_tokenizer,
         point_cloud_size=dataset_config.point_cloud_size,
         num_of_bins=dataset_config.num_of_bins,
-        std_points = dataset_config.std_points,
-        mean_points = dataset_config.mean_points,
+        std_points=dataset_config.std_points,
+        mean_points=dataset_config.mean_points,
         mean_normals=dataset_config.mean_normals,
-        std_normals=dataset_config.std_normals
+        std_normals=dataset_config.std_normals,
+        truncated_seq_len=dataset_config.truncated_seq_len,
     )
 
     dataset_size = len(dataset)

@@ -81,8 +81,13 @@ class Trainer(nn.Module):
         initial_epoch = 0
         global_step = 0
         logger = logger_init()
-        model_filename = get_latest_weights_path(self.training_config) if self.training_config.preload == "latest" else get_weights_path(self.training_config, epoch=self.training_config.preload)
         
+        if self.training_config.preload == "latest":
+            model_filename = get_latest_weights_path(self.training_config)
+        elif self.training_config.preload is not None:
+            model_filename = get_weights_path(self.training_config, epoch=self.training_config.preload)
+        else:
+            model_filename = None
 
         if model_filename:
             logger.info(f"Preloading model: {model_filename}")
@@ -124,9 +129,16 @@ class Trainer(nn.Module):
                 logger.info(f"Epoch: {epoch}, Iteration: {global_step:02d}, loss: {loss}")
 
                 #backward
+                # Skip batch if loss is NaN to prevent training corruption
+                if torch.isnan(loss) or torch.isinf(loss):
+                    logger.warning(f"Skipping batch at epoch {epoch}, step {global_step} due to NaN/Inf loss")
+                    self.optimizer.zero_grad(set_to_none=True)
+                    continue
+                    
                 self.scaler.scale(loss).backward()
                 self.scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                # Stricter gradient clipping for stability
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
                 self.scheduler.step()

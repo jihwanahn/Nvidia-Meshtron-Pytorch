@@ -11,12 +11,13 @@ class IngestionConfig:
 class DatasetConfig:
     dataset_dir: str
     original_mesh_dir: str
-    point_cloud_size: int 
+    point_cloud_size: int
     num_of_bins: int
     std_points:float
-    mean_points:float 
+    mean_points:float
     mean_normals:float
     std_normals:float
+    truncated_seq_len: int = 0  # 0 = full sequence; >0 = random crop length for truncated training
     
 @dataclass
 class ConditioningConfig:

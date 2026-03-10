@@ -30,6 +30,7 @@ class Ingestion:
         self.meshes = [get_path(self.mesh_dir, path) for path in os.listdir(self.mesh_dir)]
 
         #Creating same number of instances for each mesh
+        print(self.meshes)
         assert  self.len_dataset % len(self.meshes) == 0 , "length of dataset should be divisible by count of meshes"
 
         instances_per_mesh = self.len_dataset // len(self.meshes)

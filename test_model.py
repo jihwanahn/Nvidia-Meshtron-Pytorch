@@ -26,7 +26,7 @@ torch.manual_seed(123)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 LEARNING_RATE = 0.01
 print(DEVICE)
-tokenizer = MeshTokenizer(128)
+tokenizer = MeshTokenizer(1024)  # Paper requirement: 1024-level quantization
 
 
 NUM_EPOCHS = 5
@@ -64,7 +64,7 @@ def get_model():
                                 dim_ffn=12
                                 )
     return Meshtron(dim = 24, 
-                    embedding_size= 131,
+                    embedding_size= 1027,  # 1024 bins + 3 special tokens
                     n_heads=2,
                     head_dim=12,
                     window_size= 3,
@@ -149,8 +149,16 @@ def get_point_cloud_data(mesh_path: str):
     return points
 
 def test_inference():
-    # Configure the model parameters based on the training model parameters
-    generator = Inference(get_latest_weights_path(ConfigurationManager.training_config())).to(DEVICE)
+    print("="*60)
+    print("Starting Meshtron Inference Test")
+    print("="*60)
+    
+    print("\n[1/6] Loading model weights...")
+    weights_path = get_latest_weights_path(ConfigurationManager.training_config())
+    print(f"      Weights: {weights_path}")
+    generator = Inference(weights_path).to(DEVICE)
+    print("      ✓ Model loaded successfully")
+    
     mesh_dir = ConfigurationManager.dataset_config().original_mesh_dir
     monkey_obj = os.path.join(mesh_dir, 'suzanne.obj')
     cube_obj = os.path.join(mesh_dir,'cube.obj')
@@ -159,16 +167,32 @@ def test_inference():
     torus_obj = os.path.join(mesh_dir,'torus.obj')
 
     selected_obj = cone_obj
+    print(f"\n[2/6] Selected mesh: {os.path.basename(selected_obj)}")
 
+    print("\n[3/6] Generating point cloud from mesh...")
     points = get_point_cloud_data(selected_obj)
     points = points.unsqueeze(0)
     face_count, quad_ratio = get_mesh_stats(selected_obj)
     face_count = torch.tensor([face_count], dtype=torch.float32)
-    quad_ratio = torch.tensor([quad_ratio], dtype=torch.float32) 
+    quad_ratio = torch.tensor([quad_ratio], dtype=torch.float32)
+    print(f"      Point cloud shape: {points.shape}")
+    print(f"      Target face count: {face_count.item():.0f}")
+    print(f"      Quad ratio: {quad_ratio.item():.2f}")
 
-    gen_point_cloud = generator.run(points, face_count, quad_ratio)
+    print("\n[4/6] Running autoregressive generation...")
+    print("      (This may take several minutes depending on mesh complexity)")
+    gen_point_cloud = generator.generate(points, face_count, quad_ratio)
+    print(f"      ✓ Generated {gen_point_cloud.shape[0]} vertices ({gen_point_cloud.shape[0]//3} faces)")
 
-    write_obj(gen_point_cloud, os.path.join(get_root_folder(), 'artifacts','generations',f'gen_mesh_{os.path.basename(selected_obj)}'))
+    output_path = os.path.join(get_root_folder(), 'artifacts','generations',f'gen_mesh_{os.path.basename(selected_obj)}')
+    print(f"\n[5/6] Writing mesh to: {output_path}")
+    write_obj(gen_point_cloud, output_path)
+    print("      ✓ Mesh saved successfully")
+    
+    print("\n[6/6] Inference complete!")
+    print("="*60)
+    print(f"Generated mesh: {output_path}")
+    print("="*60)
 
 
 if __name__ == '__main__':

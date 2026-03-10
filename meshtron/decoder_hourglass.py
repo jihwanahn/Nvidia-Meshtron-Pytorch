@@ -109,14 +109,22 @@ class Transformer(nn.Module):
         self.attention = Attention(dim, num_heads, head_dim, window_size, rope, attn_dropout)
         self.FFN = FeedForwardNetwork(dim, dim_ff, ff_dropout, SwiGLU)
 
-    def forward(self,*, x: torch.Tensor, conditions: Optional[torch.Tensor], mask: Optional[torch.Tensor] = None):
-        x = self.residuals[0](x, lambda x: self.attention(q=x,k=x, v=x, mask=mask))
+    def forward(self,*, x: torch.Tensor, conditions: Optional[torch.Tensor], mask: Optional[torch.Tensor] = None, past_kv = None, use_cache = False):
+        if use_cache:
+            attn_out, new_kv = self.attention(q=x, k=x, v=x, mask=mask, past_kv=past_kv, use_cache=True)
+            x = self.residuals[0](x, lambda _: attn_out)
+        else:
+            x = self.residuals[0](x, lambda x: self.attention(q=x,k=x, v=x, mask=mask))
+            new_kv = None
+            
         if self.conditioning_flag:
             x = self.residuals[1](x, lambda x: self.attention(q=x,k= conditions, v=conditions, mask=mask))
             x = self.residuals[2](x, self.FFN)
         else:
             x = self.residuals[1](x, self.FFN)
 
+        if use_cache:
+            return x, new_kv
         return x
 
 class Layer(nn.Module):
@@ -148,11 +156,20 @@ class Layer(nn.Module):
             ) for i in range(num_blocks)
         ])
 
-    def forward(self, x, conditions, mask):
-        #tranformer blocks   
-        for block in self.blocks:
-            x = block(x = x, conditions = conditions, mask = mask)
+    def forward(self, x, conditions, mask, past_kvs = None, use_cache = False):
+        new_kvs = [] if use_cache else None
         
+        for i, block in enumerate(self.blocks):
+            past_kv = past_kvs[i] if (use_cache and past_kvs is not None) else None
+            
+            if use_cache:
+                x, new_kv = block(x = x, conditions = conditions, mask = mask, past_kv=past_kv, use_cache=True)
+                new_kvs.append(new_kv)
+            else:
+                x = block(x = x, conditions = conditions, mask = mask)
+        
+        if use_cache:
+            return x, new_kvs
         return x
         
 

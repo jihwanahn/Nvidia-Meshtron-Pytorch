@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from typing import List
+from typing import List, Optional, Tuple, Union
 import torch.nn.functional as F
 from rotary_embedding_torch import RotaryEmbedding
 from meshtron.encoder_conditioning import ConditioningEncoder
@@ -60,39 +60,62 @@ class Meshtron(nn.Module):
         x = F.pad(x, (0, 0, shift, -shift), value=0.) #padding for preventing leak
         return x
     
-    def forward(self, data, conditioning_data, face_count, quad_ratio, mask):
+    def forward(self, data, conditioning_data, face_count, quad_ratio, mask, past_kvs: Optional[List] = None, use_cache: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, List]]:
 
-        skips = [] #holds skip connection values, used in upsampling
+        skips = []
 
-        #conditioning tensor
         cond = self.conditioning_encoder(conditioning_data, face_count, quad_ratio)
 
         data = pad_to_multiple(data, self.sf ** self.total_reduction, dim=-1, value=self.pad_token)
         pad_mask = (data == self.pad_token)
         data = self.embedding(data)
-        data = data.masked_fill(pad_mask.unsqueeze(-1), 0.0)#zeroing pad tokens
+        data = data.masked_fill(pad_mask.unsqueeze(-1), 0.0)
 
-        # Pre valley block
-        data = self.pre_layer(x=data, conditions = cond, mask = mask)
-        skips.append(data) # Appending residuals to be added later
+        all_new_kvs = [] if use_cache else None
+        layer_idx = 0
 
-        ##Down valley
-        data = self.down_sample(data)
-        data = self.down_valley(x=data, conditions=cond, mask=mask)
+        if use_cache:
+            data, new_kvs = self.pre_layer(x=data, conditions=cond, mask=mask, past_kvs=past_kvs[layer_idx] if past_kvs else None, use_cache=True)
+            all_new_kvs.append(new_kvs)
+            layer_idx += 1
+        else:
+            data = self.pre_layer(x=data, conditions=cond, mask=mask)
         skips.append(data)
 
-        #center layer of valley
         data = self.down_sample(data)
-        data = self.center_layer(x = data, conditions = cond, mask = mask)
+        if use_cache:
+            data, new_kvs = self.down_valley(x=data, conditions=cond, mask=mask, past_kvs=past_kvs[layer_idx] if past_kvs else None, use_cache=True)
+            all_new_kvs.append(new_kvs)
+            layer_idx += 1
+        else:
+            data = self.down_valley(x=data, conditions=cond, mask=mask)
+        skips.append(data)
 
-        #upsampling valley
+        data = self.down_sample(data)
+        if use_cache:
+            data, new_kvs = self.center_layer(x=data, conditions=cond, mask=mask, past_kvs=past_kvs[layer_idx] if past_kvs else None, use_cache=True)
+            all_new_kvs.append(new_kvs)
+            layer_idx += 1
+        else:
+            data = self.center_layer(x=data, conditions=cond, mask=mask)
+
         data = self.__causal_upsample(data) + skips[-1]
-        data = self.up_valley(x=data, conditions=cond, mask=mask)
+        if use_cache:
+            data, new_kvs = self.up_valley(x=data, conditions=cond, mask=mask, past_kvs=past_kvs[layer_idx] if past_kvs else None, use_cache=True)
+            all_new_kvs.append(new_kvs)
+            layer_idx += 1
+        else:
+            data = self.up_valley(x=data, conditions=cond, mask=mask)
 
-        #upsampling for the last vanilla block(post layer)
         data = self.__causal_upsample(data) + skips[0]
-        data = self.post_layer(x=data, conditions = cond, mask = mask)
+        if use_cache:
+            data, new_kvs = self.post_layer(x=data, conditions=cond, mask=mask, past_kvs=past_kvs[layer_idx] if past_kvs else None, use_cache=True)
+            all_new_kvs.append(new_kvs)
+        else:
+            data = self.post_layer(x=data, conditions=cond, mask=mask)
         
+        if use_cache:
+            return data, all_new_kvs
         return data
         
     def project(self, x: torch.Tensor):

@@ -19,7 +19,7 @@ class ConfigurationManager:
             root = get_path(PROJECT_ROOT, 'artifacts'),
             dataset_storage_dir = get_path(PROJECT_ROOT, 'artifacts', 'dataset'),
             meshes = get_path(PROJECT_ROOT, 'mesh'),
-            dataset_len = 50
+            dataset_len = 100
         )
     
     @staticmethod
@@ -31,19 +31,21 @@ class ConfigurationManager:
             label_smoothing= 0.0,
             model_folder=get_path(PROJECT_ROOT, "artifacts", "models"),
             model_basename="meshtron",
-            preload="latest",
+            preload=None,
             val_after_every=2000,
         )
     
     @staticmethod
     def model_params():
-        #Custom configuration to manage low diversity in primitive dataset
+        # RTX 3090 Ti (24 GB) — 122M param config
+        # window_size=512: sliding window attention context (tokens)
+        # embedding_size = num_of_bins + 3 (SOS/EOS/PAD special tokens)
         return ModelParams(
             dim = 512,
-            embedding_size = 131,
+            embedding_size = 1027,  # 1024 bins + 3 special tokens
             n_heads = 16,
             head_dim = 32,
-            window_size = 256,
+            window_size = 512,
             dim_ff = 1536,
             shortening_factor= 3,
             num_blocks_per_layer=[4,8,12],
@@ -60,20 +62,24 @@ class ConfigurationManager:
         return DatasetConfig(
             dataset_dir=get_path(PROJECT_ROOT, 'artifacts', 'dataset'),
             original_mesh_dir=get_path(PROJECT_ROOT, 'mesh'),
-            point_cloud_size=8192//2,
-            num_of_bins=128,
+            point_cloud_size=8192,
+            num_of_bins=1024,
             std_points=0.01,
             mean_points=0.0,
             mean_normals=0.0,
-            std_normals=0.03
+            std_normals=0.03,
+            # REQUIRED for large meshes: crops sequences to fixed length.
+            # Must be a multiple of 9 (9 tokens per triangular face).
+            # 1008 = 112 faces × 9. Inference window_size should match (1008 + 9 = 1017).
+            truncated_seq_len=1008,
         )
-    
+
     @staticmethod
     def dataloader_config():
         return DataLoaderConfig(
             train_ratio=0.9,
-            batch_size=9,
-            num_workers=2,
+            batch_size=4,       # safe for 24 GB VRAM with truncated_seq_len=1008
+            num_workers=4,      # 20 CPU cores available
             shuffle=True,
             pin_memory=True,
             persistent_workers=True

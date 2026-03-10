@@ -21,11 +21,7 @@ class Attention(nn.Module):
         self.v_proj = nn.Linear(dim, self.inner_dim, bias=False)
         self.o_proj = nn.Linear(self.inner_dim, dim, bias=False)
 
-    def forward(self, q, k, v, mask = None):
-        """
-            x: Torch.tensor((batch, seq_len, dim))
-            mask: (batch, seq_len) or (batch, 1, seq_len, seq_len)
-        """
+    def forward(self, q, k, v, mask = None, past_kv = None, use_cache = False):
         is_self_attn = (q is k)
 
         b_q, l_q, _ = q.size()
@@ -34,16 +30,22 @@ class Attention(nn.Module):
         h = self.num_heads
         d = self.head_dim
 
-
         q = self.q_proj(q).view(b_q, l_q, h, d).transpose(1,2)
-        k = self.k_proj(k).view(b_k, l_k, h, d).transpose(1,2)
-        v = self.v_proj(v).view(b_v, l_v, h, d)
+        k_new = self.k_proj(k).view(b_k, l_k, h, d).transpose(1,2)
+        v_new = self.v_proj(v).view(b_v, l_v, h, d)
 
-        #positional embedding
         q = self.rope.rotate_queries_or_keys(q)
 
         if is_self_attn:
-            k = self.rope.rotate_queries_or_keys(k)
+            k_new = self.rope.rotate_queries_or_keys(k_new)
+
+        if use_cache and past_kv is not None:
+            past_k, past_v = past_kv
+            k = torch.cat([past_k, k_new], dim=1)
+            v = torch.cat([past_v, v_new.transpose(1, 2)], dim=2).transpose(1, 2)
+        else:
+            k = k_new
+            v = v_new
 
         q = q.transpose(1,2)
         k = k.transpose(1,2)
@@ -64,5 +66,10 @@ class Attention(nn.Module):
 
         out = out.reshape(b_q, l_q, self.inner_dim)
         out = self.o_proj(out)
+        
+        if use_cache:
+            k_cache = k.transpose(1, 2)
+            v_cache = v
+            return out, (k_cache, v_cache)
         
         return out

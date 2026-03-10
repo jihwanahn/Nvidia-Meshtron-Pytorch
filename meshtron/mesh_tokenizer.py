@@ -18,21 +18,19 @@ class MeshTokenizer:
         self.vocab_size = bins + 3 # add 3 for special tokens
 
     
-    def __extract_faces_bot_top(self, mesh: trimesh.Trimesh):
-        "Returns list of faces arranged from bottom to top"
-
+    def __extract_faces_bot_top(self, mesh: trimesh.Trimesh, vertices_yzx: torch.Tensor):
         faces = mesh.faces
-        vertices = mesh.vertices
-
+        
         face_data = []
         for face in faces:
-            centroid = np.mean([vertices[i][2] for i in face])
-            face_data.append((centroid, face))
-
-        face_data.sort(key=lambda x : x[0])
+            face_verts = vertices_yzx[face].numpy()
+            sorted_verts = face_verts[np.lexsort((face_verts[:, 2], face_verts[:, 1], face_verts[:, 0]))]
+            sort_key = tuple(sorted_verts[0].tolist())
+            face_data.append((sort_key, face))
+        
+        face_data.sort(key=lambda x: x[0])
         faces = np.array([face for _, face in face_data])
-        faces = torch.from_numpy(faces)
-        return faces
+        return torch.from_numpy(faces)
     
     def __normalize_verts_to_box(self, file_path: str):
         """
@@ -59,16 +57,8 @@ class MeshTokenizer:
         return torch.from_numpy(vertices)
     
     def __lex_sort_verts(self, face: torch.Tensor, all_vertices: torch.Tensor):
-        """lexicographically sorts vertices present in individual faces
-            Params:
-                Face (np.array): 1D list of vertices forming a single face
-                all_vertices (np.array): list of all vertices present in mesh rearranged as zyx
-        """
-        
         face_vertices = np.array([all_vertices[vert] for vert in face])
-        
-        sorted_idx = np.lexsort((face_vertices[:, 2], face_vertices[:,1], face_vertices[:, 0]))
-        
+        sorted_idx = np.lexsort((face_vertices[:, 2], face_vertices[:, 1], face_vertices[:, 0]))
         return face_vertices[sorted_idx]
     
     def __get_vertices(self, obj_file: str):
@@ -93,8 +83,8 @@ class MeshTokenizer:
         return (torch.clamp(torch.floor((sequence + (self.box_dim / 2)) * (self.bins / self.box_dim)), 0, self.bins - 1)).to(dtype=torch.int64)
 
     def dequantize(self, tokens: torch.Tensor):
-        "converts integer bins to float values"
-        return (tokens.float() / (self.bins - 1)) * self.box_dim - (self.box_dim / 2)
+        "converts integer bins to float values (returns bin center)"
+        return (tokens.float() + 0.5) / self.bins * self.box_dim - (self.box_dim / 2)
     
     def encode(self, mesh_path: str):
 
@@ -104,12 +94,11 @@ class MeshTokenizer:
        
         mesh.vertices = vertices
 
-        face_list = self.__extract_faces_bot_top(mesh)
+        vertices_yzx = vertices[:, [1,2,0]]
 
-        #arrange vertices as x,y,z -> z,y,x. z represents vertical axis.
-        vertices = vertices[:, [2,1,0]]
+        face_list = self.__extract_faces_bot_top(mesh, vertices_yzx)
 
-        sorted_faces_verts = torch.from_numpy(np.array([self.__lex_sort_verts(face, vertices) for face in face_list]))
+        sorted_faces_verts = torch.from_numpy(np.array([self.__lex_sort_verts(face, vertices_yzx) for face in face_list]))
 
         # Flatten the (N, 3, 3) list to (N*9)
         sequence = torch.flatten(sorted_faces_verts)
@@ -126,7 +115,6 @@ class MeshTokenizer:
         #Convert N*3 -> (N,3)
         points = coordinates.view([-1, 3])
 
-        #convert Z Y X -> X Y Z
         points = points[:, [2,1,0]]
 
         return points
