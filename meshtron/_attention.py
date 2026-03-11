@@ -41,8 +41,8 @@ class Attention(nn.Module):
 
         if use_cache and past_kv is not None:
             past_k, past_v = past_kv
-            k = torch.cat([past_k, k_new], dim=1)
-            v = torch.cat([past_v, v_new.transpose(1, 2)], dim=2).transpose(1, 2)
+            k = torch.cat([past_k, k_new], dim=2)
+            v = torch.cat([past_v, v_new], dim=1)
         else:
             k = k_new
             v = v_new

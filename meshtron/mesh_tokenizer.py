@@ -92,7 +92,7 @@ class MeshTokenizer:
 
         vertices = self.__normalize_verts_to_box(mesh_path)
        
-        mesh.vertices = vertices
+        mesh.vertices = vertices.numpy()
 
         vertices_yzx = vertices[:, [1,2,0]]
 
@@ -108,13 +108,10 @@ class MeshTokenizer:
         return sequence
     
     def decode(self, x:  torch.Tensor):
-        """Converts integer tokens to corresponding float coordinates"""
+        """Converts integer tokens to corresponding float coordinates in YZX order"""
 
         coordinates = self.dequantize(x)
 
-        #Convert N*3 -> (N,3)
         points = coordinates.view([-1, 3])
-
-        points = points[:, [2,1,0]]
 
         return points

@@ -181,12 +181,14 @@ def test_inference():
 
     print("\n[4/6] Running autoregressive generation...")
     print("      (This may take several minutes depending on mesh complexity)")
-    gen_point_cloud = generator.generate(points, face_count, quad_ratio)
-    print(f"      ✓ Generated {gen_point_cloud.shape[0]} vertices ({gen_point_cloud.shape[0]//3} faces)")
+    gen_point_cloud_yzx = generator.generate(points, face_count, quad_ratio)
+    print(f"      ✓ Generated {gen_point_cloud_yzx.shape[0]} vertices ({gen_point_cloud_yzx.shape[0]//3} faces)")
 
+    gen_point_cloud_xyz = gen_point_cloud_yzx[:, [2,0,1]]
+    
     output_path = os.path.join(get_root_folder(), 'artifacts','generations',f'gen_mesh_{os.path.basename(selected_obj)}')
     print(f"\n[5/6] Writing mesh to: {output_path}")
-    write_obj(gen_point_cloud, output_path)
+    write_obj(gen_point_cloud_xyz, output_path)
     print("      ✓ Mesh saved successfully")
     
     print("\n[6/6] Inference complete!")
